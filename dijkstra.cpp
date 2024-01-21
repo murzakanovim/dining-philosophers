@@ -2,8 +2,9 @@
 #include <mutex>
 #include <semaphore>
 #include <thread>
-#include <random>
 #include <iostream>
+
+#include "my_rand.h"
 
 constexpr size_t N = 5;
 
@@ -35,12 +36,6 @@ std::array<std::binary_semaphore, N> both_forks_available
     std::binary_semaphore{0}, std::binary_semaphore{0},
     std::binary_semaphore{0}
 };
-
-size_t my_rand(size_t min, size_t max)
-{
-    static std::mt19937 rnd(std::time(nullptr));
-    return std::uniform_int_distribution<>(min, max)(rnd);
-}
 
 void test(size_t i)
 {
