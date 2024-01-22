@@ -5,65 +5,83 @@
 #include <vector>
 #include <semaphore>
 
-constexpr int PHILOSOPHERS_COUNT = 5;
+constexpr int N = 5;
 
-std::vector<std::mutex> forks(PHILOSOPHERS_COUNT); // создаем вилки как мьютексы
-std::counting_semaphore<4> waiter(1); // "официант"
-std::mutex output_mtx;
+std::counting_semaphore<N - 1> waiter(1);
 
-void eat(int philosopher_number)
-{
-    size_t duration = my_rand(400, 800);
+class DiningTable {
+public:
+    explicit DiningTable(int N)
+        : forks(N),
+          eat_counts(N, 0) {}
+
+    void eat(int philosopher_number)
     {
-        std::lock_guard<std::mutex> lk(output_mtx);
-        std::cout << "Philosopher " << philosopher_number << " is eating " << duration << " ms\n";
+        size_t duration = my_rand(400, 800);
+        {
+            std::lock_guard<std::mutex> lk(output_mtx);
+            std::cout << "Philosopher " << philosopher_number << " is eating " << duration << " ms\n";
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(duration)); // философ ест
+        eat_counts[philosopher_number]++;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(duration)); // философ ест
-}
 
-void think(int philosopher_number)
-{
-    size_t duration = my_rand(400, 800);
+    void think(int philosopher_number)
     {
-        std::lock_guard<std::mutex> lk(output_mtx);
-        std::cout << "Philosopher " << philosopher_number << " is thinking " << duration << " ms\n";
+        size_t duration = my_rand(400, 800);
+        {
+            std::lock_guard<std::mutex> lk(output_mtx);
+            std::cout << "Philosopher " << philosopher_number << " is thinking " << duration << " ms\n";
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-}
 
-void put_forks(int philosopher_number)
-{
-    forks[philosopher_number].unlock();
-    forks[(philosopher_number + 1) % PHILOSOPHERS_COUNT].unlock();
-    waiter.release();
-}
-
-void take_forks(int philosopher_number)
-{
-    waiter.acquire();
-    forks[philosopher_number].lock();
-    forks[(philosopher_number + 1) % PHILOSOPHERS_COUNT].lock();
-}
-
-void philosopher(int philosopher_number)
-{
-    for(;;)
+    void put_forks(int philosopher_number)
     {
-        take_forks(philosopher_number);
-        eat(philosopher_number);
-        put_forks(philosopher_number);
-        think(philosopher_number);
+        forks[philosopher_number].unlock();
+        forks[(philosopher_number + 1) % forks.size()].unlock();
+        waiter.release();
+    }
+
+    void take_forks(int philosopher_number)
+    {
+        waiter.acquire();
+        forks[philosopher_number].lock();
+        forks[(philosopher_number + 1) % forks.size()].lock();
+    }
+
+    bool should_continue(int philosopher_number)
+    {
+        return eat_counts[philosopher_number] < 10;
+    }
+
+private:
+    std::vector<std::mutex> forks;
+    std::vector<int> eat_counts;
+    std::mutex output_mtx;
+};
+
+void philosopher(int philosopher_number, DiningTable& table)
+{
+    while (table.should_continue(philosopher_number))
+    {
+        table.take_forks(philosopher_number);
+        table.eat(philosopher_number);
+        table.put_forks(philosopher_number);
+        table.think(philosopher_number);
     }
 }
 
 int main()
 {
-    std::vector<std::thread> philosophers(PHILOSOPHERS_COUNT);
-    for(size_t i = 0; i < PHILOSOPHERS_COUNT; i++)
+    DiningTable table(N);
+    std::vector<std::thread> philosophers(N);
+    for(size_t i = 0; i < N; i++)
     {
-        philosophers[i] = std::thread(philosopher, i);
+        philosophers[i] = std::thread(philosopher, i, std::ref(table));
     }
-    for(auto &p: philosophers)
+
+    for(auto &&p: philosophers)
     {
         p.join();
     }

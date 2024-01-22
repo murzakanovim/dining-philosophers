@@ -1,12 +1,10 @@
-#include <array>
-#include <mutex>
-#include <semaphore>
-#include <thread>
 #include <iostream>
+#include <vector>
+#include <mutex>
+#include <thread>
+#include <semaphore>
 
 #include "my_rand.h"
-
-constexpr size_t N = 5;
 
 enum class State
 {
@@ -15,101 +13,124 @@ enum class State
     EATING
 };
 
-size_t left(size_t i)
-{
-    return (i - 1 + N) % N;
-}
 
-size_t right(size_t i)
-{
-    return (i + 1) % N;
-}
-
-std::array<State, N> state;
-
-std::mutex critical_reg_mtx;
-std::mutex output_mtx;
-
-std::array<std::binary_semaphore, N> both_forks_available
+std::array<std::binary_semaphore, 5> both_forks_available
 {
     std::binary_semaphore{0}, std::binary_semaphore{0},
     std::binary_semaphore{0}, std::binary_semaphore{0},
     std::binary_semaphore{0}
 };
 
-void test(size_t i)
+class DinnerTable
 {
-    if (state[i] == State::HUNGRY &&
-        state[left(i)] != State::EATING &&
-        state[right(i)] != State::EATING)
-    {
-        state[i] = State::EATING;
-        both_forks_available[i].release();
-    }
-}
+    std::vector<State> states;
+    std::vector<int> eat_counts;
 
-void think(size_t i)
-{
-    size_t duration = my_rand(400, 800);
-    {
-        std::lock_guard<std::mutex> lk(output_mtx);
-        std::cout << i << " is thinking " << duration << "ms\n";
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(duration));
-}
+    std::mutex critical_reg_mtx;
+    std::mutex output_mtx;
 
-void take_forks(size_t i)
-{
+    size_t left(size_t i)
+    {
+        return (i + states.size() - 1) % states.size();
+    }
+
+    size_t right(size_t i)
+    {
+        return (i + 1) % states.size();
+    }
+
+    void test(size_t i)
+    {
+        if (states[i] == State::HUNGRY &&
+            states[left(i)] != State::EATING &&
+            states[right(i)] != State::EATING)
+        {
+            states[i] = State::EATING;
+            both_forks_available[i].release();
+        }
+    }
+
+public:
+    explicit DinnerTable(size_t N)
+        :
+        states(N, State::THINKING),
+        eat_counts(N, 0)
+        {
+        }
+
+    void think(size_t i)
+    {
+        size_t duration = my_rand(400, 800);
+        {
+            std::lock_guard<std::mutex> lk(output_mtx);
+            std::cout << i << " is thinking " << duration << "ms\n";
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(duration));
+    }
+
+    void take_forks(size_t i)
+    {
+        {
+            std::lock_guard<std::mutex> lk(critical_reg_mtx);
+            states[i] = State::HUNGRY;
+            {
+                std::lock_guard<std::mutex> lk(output_mtx);
+                std::cout << "\t\t" << i << " is State::HUNGRY\n";
+            }
+            test(i);
+        }
+        both_forks_available[i].acquire();
+    }
+
+    void eat(size_t i)
+    {
+        size_t duration = my_rand(400, 800);
+        {
+            std::lock_guard<std::mutex> lk(output_mtx);
+            std::cout << "\t\t\t\t" << i << " is eating " << duration << "ms\n";
+        }
+        eat_counts[i]++;  // Increase eat count for philosopher "i"
+        std::this_thread::sleep_for(std::chrono::milliseconds(duration));
+    }
+
+    void put_forks(size_t i)
     {
         std::lock_guard<std::mutex> lk(critical_reg_mtx);
-        state[i] = State::HUNGRY;
-        {
-            std::lock_guard<std::mutex> lk(output_mtx); // critical section for uninterrupted print
-            std::cout << "\t\t" << i << " is State::HUNGRY\n";
-        }
-        test(i);
+        states[i] = State::THINKING;
+        test(left(i));
+        test(right(i));
     }
-    both_forks_available[i].acquire();
-}
 
-void eat(size_t i)
-{
-    size_t duration = my_rand(400, 800);
+    bool continue_eating(size_t i)
     {
-        std::lock_guard<std::mutex> lk(output_mtx); // critical section for uninterrupted print
-        std::cout << "\t\t\t\t" << i << " is eating " << duration << "ms\n";
+        return eat_counts[i] < 10;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(duration));
-}
+};
 
-void put_forks(size_t i)
+void philosopher(size_t i, DinnerTable& table)
 {
-    std::lock_guard<std::mutex> lk(critical_reg_mtx);
-    state[i] = State::THINKING;
-    test(left(i));
-    test(right(i));
-}
-
-void philosopher(size_t i)
-{
-    while (true)
+    while (table.continue_eating(i))
     {
-        think(i);
-        take_forks(i);
-        eat(i);
-        put_forks(i);
+        table.think(i);
+        table.take_forks(i);
+        table.eat(i);
+        table.put_forks(i);
     }
 }
 
 int main()
 {
+    size_t N = 5;
     std::vector<std::thread> threads;
-    for ( size_t i = 0; i < N; ++i )
+    DinnerTable table(N);
+
+    for (size_t i = 0; i < N; ++i)
     {
-        threads.emplace_back([i]{ std::cout << i; philosopher(i);});
+        threads.emplace_back(philosopher, i, std::ref(table));
     }
-    for (auto& t : threads)
+    for (auto&& t : threads)
     {
         t.join();
     }
+    return 0;
 }

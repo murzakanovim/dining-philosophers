@@ -1,6 +1,6 @@
 # These will be the compiler and options to use
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra
+CXXFLAGS = -std=c++20 -Wall -Wextra
 
 # The final program name
 PROGRAM1 = dijkstra
